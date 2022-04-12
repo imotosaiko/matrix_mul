@@ -1,3 +1,8 @@
 mul
 *.o
 test
+
+perf.data
+perf.data.old
+
+*.html

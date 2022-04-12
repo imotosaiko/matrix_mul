@@ -137,3 +137,82 @@ void matrix_mul(matrix_t matrix_r,              \
 
 除此之外，在使用编译选项优化前对代码进行适当的手动优化也是有益处的，大家不妨试一试对朴素算法使用 -O2 选项，将结果与对循环拆分后的结果进行对比。
 
+*** 交换循环次序
+
+在朴素算法中，每次内循环就会变动一次矩阵 B 的列标，而 c 语言中数组是按照行储存的，这意味着内循环每进行一次就要重新载入 B 中需要参与运算的数据，但是只会用到其中一个数据，这会造成缓存命中率低。
+
+#+bedin_src
+void matrix_mul(matrix_t matrix_r,              \
+                matrix_t matrix1,               \
+                matrix_t matrix2,               \
+                dim_t m, dim_t n, dim_t k) {
+    for (dim_t i1 = 0; i1 < m; i1++) {
+        for (dim_t i2 = 0; i2 < n; i2++) {
+            
+            for (dim_t i3 = 0; i3 < k; i3++) {
+                /* malloc initliaze memory to 0 by default
+                 *
+                 * C[i1][i3] += A[i1][i2] * B[i2][i3]
+                 *
+                 */
+                matrix_r[i1 * k + i3] +=    \
+                    matrix1[i1 * n + i2] *  \
+                    matrix2[i2 * k + i3];
+            }
+        }
+    }
+}
+#+end_src
+
+加上 -O2 选项后，结果如下：
+
+| 矩阵维数 | 朴素算法（-O2） | 交换循环次序（-O2） | 加速比 |
+|----------+-----------------+---------------------+--------|
+|      512 |        0.371025 |            0.049969 | 7.4251 |
+|     1024 |        3.624517 |            0.380877 | 9.5162 |
+|     2048 |       26.144212 |            3.057140 | 8.5519 |
+
+可以明显看到，加速效果极其明显。这是因为在优化后的代码中的最内层循环中，矩阵 C 与 B 每次变动列标，而矩阵 B 在每次第二层循环时变动行表，相比朴素算法，数据重用的次数大大增加（甚至相比进行了循环拆分后还要多）。这大大增加了缓存命中率，并且由于同一个数据被反复多次使用，编译器优化时会使用寄存器储存它，大大减少了因缓存读取造成的开销。
+
+使用 perf 分析朴素算法的结果如下：
+
+#+begin_src
+Performance counter stats for './mul':
+
+     1,417,345,420      cache-references:u        #  277.442 M/sec                  
+        33,748,097      cache-misses:u            #    2.381 % of all cache refs    
+          5,108.63 msec task-clock:u              #    0.610 CPUs utilized          
+                 0      context-switches:u        #    0.000 /sec                   
+                 0      cpu-migrations:u          #    0.000 /sec                   
+             1,082      page-faults:u             #  211.799 /sec                   
+    21,891,199,333      cycles:u                  #    4.285 GHz                    
+
+       8.368968740 seconds time elapsed
+
+       5.109299000 seconds user
+       0.000000000 seconds sys
+#+end_src
+
+使用 perf 分析交换循环次序后的结果如下：
+
+#+begin_src
+ Performance counter stats for './mul':
+
+     1,568,893,823      cache-references:u        #  430.631 M/sec                  
+        33,074,293      cache-misses:u            #    2.108 % of all cache refs    
+          3,643.24 msec task-clock:u              #    0.503 CPUs utilized          
+                 0      context-switches:u        #    0.000 /sec                   
+                 0      cpu-migrations:u          #    0.000 /sec                   
+             1,085      page-faults:u             #  297.812 /sec                   
+    15,884,304,284      cycles:u                  #    4.360 GHz                    
+
+       7.245727861 seconds time elapsed
+
+       3.640509000 seconds user
+       0.003330000 seconds sys
+#+end_src
+
+对比可以看到，缓存命中率 cache-references 一项后者大大高于前者。
+
+这同时也印证了前面所说，在使用编译选项前对代码进行合理优化结果会大不一样。
+

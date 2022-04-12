@@ -1,5 +1,5 @@
 objects = main.o matrix_mul.o matrix_mul_test.o
-options = -O0
+options = -O2
 
 mul: main.o matrix_mul.o Makefile
 	gcc $(options) -o mul main.o matrix_mul.o
