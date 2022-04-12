@@ -68,6 +68,8 @@ void matrix_mul(matrix_t matrix_r,              \
 
 *** 循环拆分
 
+如果同学们尝试展开通用矩阵乘法的公式就可以发现， A 与 B 矩阵每个元素都会多次参加运算，但是在朴素算法中我们在最内层循环每次都对一个元素只使用一次，等到第二次使用到这个元素时又需要重新加载其到缓存中，循环拆分可以通过数据重用来解决这个问题。
+
 #+begin_src
 void matrix_mul(matrix_t matrix_r,              \
                 matrix_t matrix1,               \
@@ -105,6 +107,8 @@ void matrix_mul(matrix_t matrix_r,              \
 }
 #+end_src
 
+在上面的代码中，最内层循环重复使用了 A[i1][i3] 这个元素，这会减少因反复加载同一数据产生的开销（可以类比为，你的一个室友每隔一会就叫你过去帮她做一件事情，与将你叫过去一次把你要做的所有事情都做完，显然后者效率更高）
+
 运行结果：
 
 |    M |    N |    K |  平均时间 |
@@ -141,7 +145,7 @@ void matrix_mul(matrix_t matrix_r,              \
 
 在朴素算法中，每次内循环就会变动一次矩阵 B 的列标，而 c 语言中数组是按照行储存的，这意味着内循环每进行一次就要重新载入 B 中需要参与运算的数据，但是只会用到其中一个数据，这会造成缓存命中率低。
 
-#+bedin_src
+#+begin_src
 void matrix_mul(matrix_t matrix_r,              \
                 matrix_t matrix1,               \
                 matrix_t matrix2,               \
@@ -215,4 +219,135 @@ Performance counter stats for './mul':
 对比可以看到，缓存命中率 cache-references 一项后者大大高于前者。
 
 这同时也印证了前面所说，在使用编译选项前对代码进行合理优化结果会大不一样。
+
+*** Coppersmith–Winograd 算法
+
+截至到现在，我们使用的方法都还是基于朴素的算法进行改进，尽管可以得到可观的加速比，但是其算法层面的局限性决定了我们必须使用三个 for 循环，也就是时间复杂度为 O(n^3) ，随着矩阵规模逐渐扩大，其时间会呈现三次函数的趋势迅速增加。
+
+除了朴素算法之外，我们还有其他可供选择的算法，它们的时间复杂度低于朴素算法。这意味着随着矩阵规模越来越大，这种算法在时间上的优势也会越来越大。
+
+#+begin_src
+void cw(matrix_t matrix_r, matrix_t matrix1, matrix_t matrix2, dim_t n) {
+    if (n == 2) {
+        matrix_mul(matrix_r, matrix1, matrix2, 4, 4, 4);
+        return;
+    }
+
+    matrix_t a11 = malloc(sizeof(element_t) * n * n * 8);
+    matrix_t a12 = a11 + n * n;
+    matrix_t a21 = a12 + n * n;
+    matrix_t a22 = a21 + n * n;
+    part_matrix(matrix1, a11, a12, a21, a22, n);
+    matrix_t b11 = a22 + n * n;
+    matrix_t b12 = b11 + n * n;
+    matrix_t b21 = b12 + n * n;
+    matrix_t b22 = b21 + n * n;
+    part_matrix(matrix2, b11, b12, b21, b22, n);
+    
+    matrix_t s1 = matrix1;
+    matrix_t s2 = s1 + n * n;
+    matrix_t s3 = s2 + n * n;
+    matrix_t s4 = s3 + n * n;
+    matrix_t t1 = matrix2;
+    matrix_t t2 = t1 + n * n;
+    matrix_t t3 = t2 + n * n;
+    matrix_t t4 = t3 + n * n;
+    
+    matrix_add(s1, a21, a22, n, n);
+    matrix_sub(s2, s1, a11, n, n);
+    matrix_sub(s3, a11, a21, n, n);
+    matrix_sub(s4, a12, s2, n, n);
+    matrix_sub(t1, b12, b11, n, n);
+    matrix_sub(t2, b22, t1, n, n);
+    matrix_sub(t3, b22, b12, n, n);
+    matrix_sub(t4, t2, b21, n, n);
+    
+    matrix_t m1 = a21;
+    memset(m1, 0, sizeof(element_t) * n * n);
+    cw(m1, a11, b11, n / 2);
+    matrix_t m2 = a11;
+    memset(m2, 0, sizeof(element_t) * n * n);
+    cw(m2, a12, b21, n/2);
+    matrix_t m3 = a12;
+    memset(m3, 0, sizeof(element_t) * n * n);
+    cw(m3, s4, b22, n/2);
+    matrix_t m4 = s4;
+    memset(m4, 0, sizeof(element_t) * n * n);
+    cw(m4, a22, t4, n/2);
+    matrix_t m5 = a22;
+    memset(m5, 0, sizeof(element_t) * n * n);
+    cw(m5, s1, t1, n/2);
+    matrix_t m6 = s1;
+    memset(m6, 0, sizeof(element_t) * n * n);
+    cw(m6, s2, t2, n/2);
+    matrix_t m7 = s2;
+    memset(m7, 0, sizeof(element_t) * n * n);
+    cw(m7, s3, t3, n/2);
+
+    matrix_t u1 = b11;
+    matrix_t u2 = b12;
+    matrix_t u3 = b21;
+    matrix_t u4 = b22;
+    matrix_t u5 = s3;
+    matrix_t u6 = s4;
+    matrix_t u7 = t1;
+   
+    matrix_add(u1, m1, m2, n, n);
+    matrix_add(u2, m1, m6, n, n);
+    matrix_add(u3, u2, m7, n, n);
+    matrix_add(u4, u2, m5, n, n);
+    matrix_add(u5, u4, m3, n, n);
+    matrix_sub(u6, u3, m4, n, n);
+    matrix_add(u7, u3, m5, n, n);
+    
+    matrix_t c11 = u1;
+    matrix_t c12 = u5;
+    matrix_t c21 = u6;
+    matrix_t c22 = u7;    
+    comb_matrix(matrix_r, c11, c12, c21, c22, n);
+
+    free(a11);
+}
+#+end_src
+
+在未添加任何编译器优化参数的情况下，运行结果如下：
+
+| 矩阵维数 |  朴素算法 | Coppersmith–Winograd | 加速比 |
+|----------+-----------+----------------------+--------|
+|      512 |  0.506073 |             0.352850 | 1.4342 |
+|     1024 |  4.133914 |             2.553325 | 1.6190 |
+|     2048 | 37.469813 |            18.096058 | 2.0706 |
+
+可以看出，加速效果也十分明显，并且理论上讲，如果继续扩大矩阵规模，这个优势会越来越大。
+
+*** 进一步的思考
+
+以上我们通过求两个矩阵相乘，介绍了许多种优化的思路，其中很多都可以组合使用（例如算法优化后再添加 -O2 选项等）。而在我们没有介绍的世界里，还有着多线程、向量化甚至 gpu 加速等能够提供更大的加速比的方式等着我们去发现。
+
+在循环拆分中，我们只介绍了拆分一次后的情况， A 同行的数据可以重用，那么在列方向上，这同样是可行的吗？（可以参考老师布置作业时附上的链接中介绍的方法）
+
+在编译器选项优化中， gcc 提供的编译器选项远远不止 -O 一种，其它的选项是不是可以让效果更上一层楼呢？
+
+在 Coppersmith-Winograd 算法中， malloc 是一个比较消耗时间的函数，但是在每次递归中我们都要进行一次 malloc 与 free ，我们知道，在一个矩阵给定了规模之后，它在算法中递归的次数应该是确定的，那么有没有可能我们提前计算出这个数值，在算法外一次 malloc 后供整个算法使用呢？
+
+Coppersmith-Winograd 算法中需要创建大量小矩阵，有些在某些步骤之后就不再使用了，那么我们后续的步骤中再需要创建新的小矩阵的时候是不是可以重用这些空间呢？
+
+在我们进行循环拆分和 Coppersmith-Winograd 算法中，参与运算的矩阵似乎并不是任意给的了，而必须是阶数为 2^n 的方阵，在数学上，如果我们对两个矩阵扩充规模并把多出来的地方补 0 ，结果是不会改变的，是否可以利用这点使其可以计算任意给定的两个可以相乘的矩阵呢？
+
+我相信，实践出真知。如果大家都能够动手自己实现上面的代码，相信一定会对这些的理解更进一步。在此之上，动脑筋继续修改优化上面的例子，在辛苦了许久之后能看到运行时间的确前进了一小步，这种欢欣是会无比真诚的。
+
+** 实验总结
+
+矩阵相乘作为一种广泛应用于各学科的运算，对其的优化是具有重大意义的。作为学生的我们，在动手中理解并掌握矩阵优化的具体方法，是大有裨益的。
+
+在实践中，我总结了自己解决问题的一般流程，记录下来以供大家参考批判：
+
+1. 数学基础很重要
+   譬如说循环拆分，仅仅照抄甚至背代码是远远不够的，当我们需要按照自己的需要进行拆分时（例如，后续我们需要做向量化的时候），按需定制代码是必需的。而如果不了解其中的数学原理，则很容易陷入代码修改后结果变得乱七八糟的境地。
+2. 善用分析工具
+   前几节课中介绍的 perf 就是一个很好的工具，提供了程序运行中详细的各种参数供我们参考，尤其是在寻找热点代码和分析瓶颈所在。由于每位同学的代码实现不同，也许我们之间的热点代码并不相通（例如说，如果在 Coppersmith–Winograd 算法中频繁使用 malloc 分配内存，也会造成时间上巨大的开销），因此按照分析工具给出的结果具体情况具体分析才是把握问题并解决问题的有效途径。
+3. 善用搜索工具
+   最后向大家介绍几个有关学习 C 语言个人常用的网站，
+   - cppreference: https://en.cppreference.com/w/ （ c/c++ 参考网站，可以查阅到各种有关的语言基础概念与各种标准库的详尽解释与示例，网站支持中文）
+   - GNU glibc Manual: https://www.gnu.org/software/libc/manual/html_mono/libc.html （GNU 官方编写的 glic 库教程，我们使用库函数时详尽的参考，仅有英文版）
 
