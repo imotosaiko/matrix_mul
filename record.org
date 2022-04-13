@@ -1,4 +1,6 @@
-* 通用矩阵乘法实验报告
+#+TITLE: 通用矩阵乘法实验报告
+#+OPTIONS: toc:nil num:3 H:4 ^:nil pri:t
+#+HTML_HEAD: <link rel="stylesheet" type="text/css" href="http://gongzhitaao.org/orgcss/org.css"/>
 
 ** 引言
 
